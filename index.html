@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AK-47 セレクター＆発射シミュレーター</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+            color: #d1a153;
+        }
+        .subtitle {
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 20px;
+        }
+        #canvas-container {
+            position: relative;
+            background-color: #262626;
+            border: 2px solid #3a3a3a;
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        canvas {
+            display: block;
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            width: 100%;
+            max-width: 600px;
+        }
+        button {
+            flex: 1;
+            padding: 15px;
+            font-size: 1rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            user-select: none;
+        }
+        button:active {
+            transform: scale(0.98);
+        }
+        #btn-trigger {
+            background-color: #d9534f;
+            color: white;
+            flex: 2;
+        }
+        #btn-trigger:hover { background-color: #c9302c; }
+        #btn-trigger:active { background-color: #ac2925; }
+        
+        #btn-reload {
+            background-color: #5cb85c;
+            color: white;
+        }
+        #btn-reload:hover { background-color: #449d44; }
+
+        #log {
+            margin-top: 15px;
+            width: 100%;
+            max-width: 580px;
+            height: 100px;
+            background-color: #111;
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            overflow-y: auto;
+            color: #00ff00;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>AK-47 SELECTOR SIMULATOR</h1>
+    <div class="subtitle">キャンバス内のレバーをクリックするか、下のボタンで操作できます</div>
+
+    <div id="canvas-container">
+        <canvas id="simCanvas" width="600" height="300"></canvas>
+    </div>
+
+    <div class="controls">
+        <button id="btn-trigger">トリガーを引く (ホールド可)</button>
+        <button id="btn-reload">リロード</button>
+    </div>
+
+    <div id="log"></div>
+
+    <!-- TypeScript風の純粋なJavaScriptで記述（そのままブラウザで動きます） -->
+    <script>
+        const canvas = document.getElementById('simCanvas');
+        const ctx = canvas.getContext('2d');
+        const logEl = document.getElementById('log');
+
+        // 状態管理
+        let selector = 'Safe'; // 'Safe' | 'Auto' | 'Semi'
+        let ammo = 30;
+        const maxAmmo = 30;
+        let isTriggerPulled = false;
+        let lastFireTime = 0;
+        const fireRateMs = 100; // 600 RPM
+        let flashIntensity = 0; // マズルブラストの光の強さ
+        let triggerLockedMessage = false;
+
+        // セレクターのクリック判定用座標（AK-47のレバー位置）
+        const leverX = 350;
+        const positions = {
+            Safe: { y: 140, label: '安全 (Safe)' },
+            Auto: { y: 170, label: '連射 (Auto)' },
+            Semi: { y: 200, label: '単射 (Semi)' }
+        };
+
+        function addLog(message) {
+            logEl.innerHTML += `<div>${message}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function switchSelector(mode) {
+            selector = mode;
+            addLog(`セレクター: ${positions[mode].label}`);
+            triggerLockedMessage = false;
+        }
+
+        function reload() {
+            ammo = maxAmmo;
+            addLog("リロード完了 (30発)");
+        }
+
+        // 発射処理
+        function fire() {
+            if (ammo <= 0) {
+                addLog("カチッ！ (弾切れ)");
+                isTriggerPulled = false;
+                return false;
+            }
+            ammo--;
+            flashIntensity = 1.0; // マズルブラスト点灯
+            addLog(`🔥 バン！ (残弾: ${ammo}/${maxAmmo})`);
+            return true;
+        }
+
+        // 描画ループ
+        function draw() {
+            // 背景クリア
+            ctx.fillStyle = '#262626';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 1. 銃身の簡易描画 (AK-47のシルエットイメージ)
+            ctx.fillStyle = '#444';
+            ctx.fillRect(100, 140, 300, 30); // レシーバー
+            ctx.fillRect(400, 145, 120, 10); // バレル（銃身）
+            ctx.fillStyle = '#6d4c41'; 
+            ctx.fillRect(20, 140, 80, 50);  // ストック（銃床）
+            ctx.fillRect(220, 155, 100, 20); // ハンドガード
+
+            // マガジン
+            ctx.beginPath();
+            ctx.arc(200, 170, 70, 0, Math.PI * 0.4);
+            ctx.lineWidth = 25;
+            ctx.strokeStyle = '#333';
+            ctx.stroke();
+
+            // 2. マズルブラスト（銃口の炎）の描画
+            if (flashIntensity > 0) {
+                ctx.save();
+                ctx.translate(520, 150);
+                
+                // 外側のオレンジの炎
+                ctx.fillStyle = `rgba(255, 100, 0, ${flashIntensity})`;
+                ctx.beginPath();
+                ctx.moveTo(0, -5);
+                ctx.lineTo(40 + Math.random() * 20, -15);
+                ctx.lineTo(15, 0);
+                ctx.lineTo(40 + Math.random() * 20, 15);
+                ctx.lineTo(0, 5);
+                ctx.fill();
+
+                // 内側の黄色い芯
+                ctx.fillStyle = `rgba(255, 255, 200, ${flashIntensity})`;
+                ctx.beginPath();
+                ctx.moveTo(0, -2);
+                ctx.lineTo(20, -5);
+                ctx.lineTo(10, 0);
+                ctx.lineTo(20, 5);
+                ctx.lineTo(0, 2);
+                ctx.fill();
+                
+                ctx.restore();
+                flashIntensity -= 0.25; // 徐々に消える
+            }
+
+            // 3. セレクターインジケーターの描画
+            ctx.fillStyle = '#555';
+            ctx.fillRect(leverX - 10, 130, 6, 90); // ガイドレール
+            
+            // 各モードの文字
+            ctx.font = '12px monospace';
+            Object.keys(positions).forEach(mode => {
+                ctx.fillStyle = (selector === mode) ? '#ffcc00' : '#888';
+                ctx.fillText(mode.toUpperCase(), leverX + 20, positions[mode].y + 4);
+                
+                // ポジションの目印の点
+                ctx.beginPath();
+                ctx.arc(leverX - 7, positions[mode].y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // セレクターレバー本体
+            ctx.fillStyle = '#d1a153';
+            ctx.fillRect(leverX - 15, positions[selector].y - 6, 25, 12);
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(leverX - 15, positions[selector].y - 6, 25, 12);
+
+            // 4. UI情報（残弾数など）
+            ctx.fillStyle = '#fff';
+            ctx.font = '16px Arial';
+            ctx.fillText(`MODE: ${selector.toUpperCase()}`, 20, 40);
+            
+            // 残弾カウンター
+            ctx.fillStyle = ammo === 0 ? '#ff3333' : '#00ff00';
+            ctx.font = 'bold 20px monospace';
+            ctx.fillText(`AMMO: ${ammo} / ${maxAmmo}`, 20, 70);
+
+            // 安全装置ロック警告
+            if (selector === 'Safe' && triggerLockedMessage) {
+                ctx.fillStyle = '#ff3333';
+                ctx.font = 'bold 16px Arial';
+                ctx.fillText('【LOCKED】安全装置がオンです', 20, 260);
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        // ロジックアップデート（発射間隔の管理）
+        function update(currentTime) {
+            if (isTriggerPulled) {
+                if (selector === 'Safe') {
+                    triggerLockedMessage = true;
+                } else if (selector === 'Auto') {
+                    if (currentTime - lastFireTime >= fireRateMs) {
+                        if (fire()) lastFireTime = currentTime;
+                    }
+                }
+            }
+            requestAnimationFrame(update);
+        }
+
+        // --- イベントリスナー ---
+
+        // キャンバス上のセレクタークリック判定
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            // セレクター付近がクリックされたか
+            if (mouseX >= leverX - 30 && mouseX <= leverX + 80) {
+                Object.keys(positions).forEach(mode => {
+                    if (Math.abs(mouseY - positions[mode].y) < 15) {
+                        switchSelector(mode);
+                    }
+                });
+            }
+        });
+
+        // トリガーボタンのイベント
+        const triggerBtn = document.getElementById('btn-trigger');
+        
+        const startFiring = (e) => {
+            e.preventDefault();
+            if (isTriggerPulled) return;
+            isTriggerPulled = true;
+            
+            const now = performance.now();
+            if (selector === 'Semi') {
+                fire(); // セミオートは1タップ1発のみ
+            } else if (selector === 'Auto') {
+                fire(); // フルオートの初弾
+                lastFireTime = now;
+            }
+        };
+
+        const stopFiring = () => {
+            isTriggerPulled = false;
+        };
+
+        triggerBtn.addEventListener('mousedown', startFiring);
+        window.addEventListener('mouseup', stopFiring);
+        
+        // スマホ対応
+        triggerBtn.addEventListener('touchstart', startFiring);
+        window.addEventListener('touchend', stopFiring);
+
+        // リロードボタン
+        document.getElementById('btn-reload').addEventListener('click', reload);
+
+        // 初期ログとループ開始
+        addLog("シミュレーター起動。安全装置作動中。");
+        requestAnimationFrame(draw);
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>
